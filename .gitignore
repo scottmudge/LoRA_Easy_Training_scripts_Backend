@@ -155,3 +155,8 @@ config.json
 runtime_store
 *.rest
 config.yml
+*.wandb
+wandb/*/files/config.yaml
+wandb/*/files/requirements.txt
+wandb/*/files/wandb-metadata.json
+wandb/*/files/wandb-summary.json
