@@ -253,6 +253,8 @@ def validate_optimizer(args: dict) -> None:
             args["optimizer_type"] = "LoraEasyCustomOptimizer.lpfadamw.LPFAdamW"
         case "rmsprop":
             args["optimizer_type"] = "LoraEasyCustomOptimizer.rmsprop.RMSProp"
+        case "shampoo":
+            args["optimizer_type"] = "LoraEasyCustomOptimizer.shampoo.Shampoo"
 
 
 def get_tags_from_file(file: str, tags: dict) -> None:
