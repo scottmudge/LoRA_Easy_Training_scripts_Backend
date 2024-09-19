@@ -9,3 +9,4 @@ scipy
 came-pytorch
 pytorch_optimizer==3.0.2
 lycoris-lora==3.0.1.dev10
+wheel
