@@ -1,8 +1,7 @@
 # Authored by: https://github.com/kozistr
-# Source: https://github.com/kozistr/pytorch_optimizer/blob/v3.0.2/pytorch_optimizer/optimizer/shampoo.py
+# Source: https://github.com/kozistr/pytorch_optimizer/blob/main/pytorch_optimizer/optimizer/shampoo.py
 
 import torch
-from torch.optim.optimizer import Optimizer
 
 from pytorch_optimizer.base.exception import NoSparseGradientError
 from pytorch_optimizer.base.optimizer import BaseOptimizer
@@ -16,7 +15,7 @@ from pytorch_optimizer.optimizer.shampoo_utils import (
 )
 
 
-class Shampoo(Optimizer, BaseOptimizer):
+class Shampoo(BaseOptimizer):
     r"""Preconditioned Stochastic Tensor Optimization.
 
     :param params: PARAMETERS. iterable of parameters to optimize or dicts defining parameter groups.
@@ -40,6 +39,7 @@ class Shampoo(Optimizer, BaseOptimizer):
         fixed_decay: bool = False,
         preconditioning_compute_steps: int = 1,
         matrix_eps: float = 1e-6,
+        **kwargs,
     ):
         self.validate_learning_rate(lr)
         self.validate_range(momentum, 'momentum', 0.0, 1.0)
@@ -140,7 +140,7 @@ class Shampoo(Optimizer, BaseOptimizer):
         return loss
 
 
-class ScalableShampoo(Optimizer, BaseOptimizer):
+class ScalableShampoo(BaseOptimizer):
     r"""Scalable Preconditioned Stochastic Tensor Optimization.
 
         This version of Scalable Shampoo Optimizer aims for a single GPU environment, not for a distributed environment
@@ -215,6 +215,7 @@ class ScalableShampoo(Optimizer, BaseOptimizer):
         diagonal_eps: float = 1e-10,
         matrix_eps: float = 1e-6,
         use_svd: bool = False,
+        **kwargs,
     ):
         self.validate_learning_rate(lr)
         self.validate_betas(betas)
@@ -339,13 +340,15 @@ class ScalableShampoo(Optimizer, BaseOptimizer):
 
                     shampoo_grad.mul_(graft_norm / (shampoo_norm + 1e-16))
 
-                if group['weight_decay'] > 0.0:
-                    if not group['decoupled_weight_decay']:
-                        graft_grad.add_(p, alpha=group['weight_decay'])
-                        shampoo_grad.add_(p, alpha=group['weight_decay'])
-                    else:
-                        graft_grad.mul_(1.0 - group['lr'] * group['weight_decay'])
-                        shampoo_grad.mul_(1.0 - group['lr'] * group['weight_decay'])
+                for g in (graft_grad, shampoo_grad):
+                    self.apply_weight_decay(
+                        p,
+                        g,
+                        group['lr'],
+                        group['weight_decay'],
+                        group['decoupled_weight_decay'],
+                        fixed_decay=False,
+                    )
 
                 state['momentum'].mul_(beta1).add_(shampoo_grad)
                 graft_momentum = graft.update_momentum(grad, beta1)
