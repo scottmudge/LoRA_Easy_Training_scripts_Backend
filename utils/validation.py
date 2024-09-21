@@ -253,10 +253,12 @@ def validate_optimizer(args: dict) -> None:
             args["optimizer_type"] = "LoraEasyCustomOptimizer.lpfadamw.LPFAdamW"
         case "rmsprop":
             args["optimizer_type"] = "LoraEasyCustomOptimizer.rmsprop.RMSProp"
-        case "shampoo":
-            args["optimizer_type"] = "LoraEasyCustomOptimizer.shampoo.Shampoo"
         case "scalableshampoo":
             args["optimizer_type"] = "LoraEasyCustomOptimizer.shampoo.ScalableShampoo"
+        case "soap":
+            args["optimizer_type"] = "LoraEasyCustomOptimizer.soap.SOAP"
+        case "ademamix":
+            args["optimizer_type"] = "LoraEasyCustomOptimizer.ademamix.AdEMAMix"
 
 
 def get_tags_from_file(file: str, tags: dict) -> None:
