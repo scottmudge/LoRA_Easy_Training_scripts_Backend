@@ -236,7 +236,7 @@ class CAME(BaseOptimizer):
         return loss
 
 
-def copy_stochastic_(target: Tensor, source: Tensor):
+def copy_stochastic_(target: torch.Tensor, source: torch.Tensor):
     # create a random 16 bit integer
     result = torch.randint_like(
         source,
