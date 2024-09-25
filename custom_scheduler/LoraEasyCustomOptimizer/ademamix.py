@@ -9,6 +9,7 @@ import torch
 from pytorch_optimizer.base.exception import NoSparseGradientError
 from pytorch_optimizer.base.optimizer import BaseOptimizer
 from pytorch_optimizer.base.types import BETAS, CLOSURE, DEFAULTS, LOSS, PARAMETERS
+from .utils import copy_stochastic_
 
 
 class AdEMAMix(BaseOptimizer):
@@ -116,11 +117,17 @@ class AdEMAMix(BaseOptimizer):
             for p in group['params']:
                 if p.grad is None:
                     continue
-
-                grad = p.grad
-                if grad.is_sparse:
+                    
+                if p.grad.is_sparse:
                     raise NoSparseGradientError(str(self))
 
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    grad = p.grad.to(torch.float32)
+                    p_fp32 = p.clone().to(torch.float32)
+                else:
+                    grad = p.grad
+                    p_fp32 = p
+                
                 state = self.state[p]
 
                 if len(state) == 0:
@@ -129,7 +136,7 @@ class AdEMAMix(BaseOptimizer):
                     state['exp_avg_slow'] = torch.zeros_like(p)
 
                 self.apply_weight_decay(
-                    p=p,
+                    p=p_fp32,
                     grad=grad,
                     lr=group['lr'],
                     weight_decay=group['weight_decay'],
@@ -137,7 +144,10 @@ class AdEMAMix(BaseOptimizer):
                     fixed_decay=group['fixed_decay'],
                 )
 
-                exp_avg, exp_avg_sq, exp_avg_slow = state['exp_avg'], state['exp_avg_sq'], state['exp_avg_slow']
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    exp_avg, exp_avg_sq, exp_avg_slow = state['exp_avg'].to(torch.float32), state['exp_avg_sq'].to(torch.float32), state['exp_avg_slow'].to(torch.float32)
+                else:
+                    exp_avg, exp_avg_sq, exp_avg_slow = state['exp_avg'], state['exp_avg_sq'], state['exp_avg_slow']
 
                 exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
                 exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
@@ -147,6 +157,12 @@ class AdEMAMix(BaseOptimizer):
 
                 step_size = group['lr'] / bias_correction1
 
-                p.addcdiv_(exp_avg + alpha_t * exp_avg_slow, de_nom, value=-step_size)
+                p_fp32.addcdiv_(exp_avg + alpha_t * exp_avg_slow, de_nom, value=-step_size)
+                
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    copy_stochastic_(state["exp_avg"], exp_avg)
+                    copy_stochastic_(state["exp_avg_sq"], exp_avg_sq)
+                    copy_stochastic_(state["exp_avg_slow"], exp_avg_slow)
+                    copy_stochastic_(p, p_fp32)
 
         return loss
