@@ -259,6 +259,10 @@ def validate_optimizer(args: dict) -> None:
             args["optimizer_type"] = "LoraEasyCustomOptimizer.soap.SOAP"
         case "ademamix":
             args["optimizer_type"] = "LoraEasyCustomOptimizer.ademamix.AdEMAMix"
+        case "fcompass":
+            args["optimizer_type"] = "LoraEasyCustomOptimizer.fcompass.FCompass"
+        case "fishmonger":
+            args["optimizer_type"] = "LoraEasyCustomOptimizer.fishmonger.FishMonger"
 
 
 def get_tags_from_file(file: str, tags: dict) -> None:
