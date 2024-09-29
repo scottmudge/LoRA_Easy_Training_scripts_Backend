@@ -1,5 +1,6 @@
 import torch
 from torch.optim import Optimizer
+from .utils import copy_stochastic_
 
 # Fisher optimizer (FAdam) from https://github.com/lessw2020/FAdam_PyTorch/blob/main/fadam.py by Less Wright (lessw2020), I may not know them, but I am aware of their expertise. Many thanks for your contributing work!
 # Original optimizer (Compass) from https://github.com/lodestone-rock/compass_optimizer/blob/main/compass.py by lodestone-rock, many thanks for their optim, help, and ideas!
@@ -60,7 +61,7 @@ class FCompass(Optimizer):
             for p in group["params"]:
                 if p.grad is None:
                     continue
-                grad = p.grad.data
+                grad = p.grad
                 if grad.is_sparse:
                     raise RuntimeError("Compass does not support sparse gradients")
 
@@ -75,7 +76,15 @@ class FCompass(Optimizer):
                     # Fisher Information Matrix
                     state["fim"] = torch.ones_like(p.data)
 
-                momentum, fim, max_ema_squared = state["momentum"], state["fim"], state['max_ema_squared']
+                # unpack
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    grad = grad.to(torch.float32).data
+                    momentum, fim, max_ema_squared = state["momentum"].to(torch.float32), state["fim"].to(torch.float32), state['max_ema_squared'].to(torch.float32)
+                    p_fp32 = p.clone().to(torch.float32)
+                else:
+                    grad = grad.data
+                    momentum, fim, max_ema_squared = state["momentum"], state["fim"], state['max_ema_squared']
+
                 beta1, beta2 = group["betas"]
                 amplification_factor = group["amp_fac"]
                 lr = group["lr"]
@@ -115,7 +124,10 @@ class FCompass(Optimizer):
                 grad_nat.add_(momentum, alpha=amplification_factor)
 
                 # Weight decay
-                grad_weights = p.data / fim_base
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    grad_weights = p_fp32.data / fim_base
+                else:
+                    grad_weights = p.data / fim_base
 
                 if clip != 0:
                     rms = grad_weights.pow(2).mean().sqrt_().add_(curr_eps)
@@ -128,5 +140,15 @@ class FCompass(Optimizer):
                 torch.max(max_ema_squared, max_ema_squared.mul(beta2).addcmul_(full_step, full_step, value=1 - beta2), out=max_ema_squared)
                 denom = (max_ema_squared.sqrt() / bias_correction_sqrt).add_(curr_eps)
 
-                p.data.addcdiv_(full_step, denom, value=-lr)
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    p_fp32.data.addcdiv_(full_step, denom, value=-lr)
+                else:
+                    p.data.addcdiv_(full_step, denom, value=-lr)
+
+                # pack
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    copy_stochastic_(state["momentum"], momentum)
+                    copy_stochastic_(state["fim"], fim)
+                    copy_stochastic_(state["max_ema_squared"], max_ema_squared)
+                    copy_stochastic_(p, p_fp32)
         return loss

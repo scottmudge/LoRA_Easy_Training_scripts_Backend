@@ -1,5 +1,6 @@
 import torch
 from torch.optim import Optimizer
+from .utils import copy_stochastic_
 
 # FishMonger from https://github.com/Clybius/Personalized-Optimizers/blob/main/FishMonger.py by Clybius
 class FishMonger(Optimizer):
@@ -62,7 +63,7 @@ class FishMonger(Optimizer):
             for p in group["params"]:
                 if p.grad is None:
                     continue
-                grad = p.grad.data
+                grad = p.grad
                 if grad.is_sparse:
                     raise RuntimeError("Compass does not support sparse gradients")
 
@@ -81,10 +82,19 @@ class FishMonger(Optimizer):
                     # Previous grad
                     if diff_amp:
                         state["ema_diff"] = torch.zeros_like(p.data)
-                        state['previous_grad'] = grad.clone().mul_(-1.0)
+                        state['previous_grad'] = grad.data.clone().mul_(-1.0)
 
-                momentum, momentum_slow, momentum_slow_squared, fim = state["momentum"], state["momentum_slow"], state["momentum_slow_squared"], state["fim"]
-                ema_diff = state["ema_diff"] if diff_amp else 0
+                # unpack
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    grad = grad.to(torch.float32).data
+                    momentum, momentum_slow, momentum_slow_squared, fim = state["momentum"].to(torch.float32), state["momentum_slow"].to(torch.float32), state["momentum_slow_squared"].to(torch.float32), state["fim"].to(torch.float32)
+                    p_fp32 = p.clone().to(torch.float32)
+                    ema_diff = state["ema_diff"].to(torch.float32) if diff_amp else 0
+                else:
+                    grad = grad.data
+                    momentum, momentum_slow, momentum_slow_squared, fim = state["momentum"], state["momentum_slow"], state["momentum_slow_squared"], state["fim"]
+                    ema_diff = state["ema_diff"] if diff_amp else 0
+
                 beta1, beta2, beta3 = group["betas"]
                 lr = group["lr"]
                 weight_decay = group["weight_decay"]
@@ -93,15 +103,21 @@ class FishMonger(Optimizer):
                 state["step"] += 1
                 
                 if diff_amp:
-                    grad_diff = state['previous_grad']
+                    if p.dtype in {torch.float16, torch.bfloat16}:
+                        grad_diff = state['previous_grad']
+                    else:
+                        grad_diff = state['previous_grad'].to(torch.float32)
                     # grad_diff will contain the difference between prev grad and current grad
                     grad_diff.add_(grad)
 
                     # Smooth the difference between previous grad and current grad
                     ema_diff.mul_(group["diff_amp_beta"]).add_(grad_diff, alpha=1 - group["diff_amp_beta"])
 
-                    state['previous_grad'].copy_(-grad)
-                
+                    if p.dtype in {torch.float16, torch.bfloat16}:
+                        copy_stochastic_(state["previous_grad"], -grad)
+                    else:
+                        state['previous_grad'].copy_(-grad)
+
                 # Momentumize the gradient
                 momentum.mul_(beta1).add_(grad, alpha=1 - beta1)
 
@@ -142,7 +158,10 @@ class FishMonger(Optimizer):
                 grad_nat_2.div_(divisor)
 
                 # Weight decay
-                grad_weights = p.data / fim_base / fim_slow_base
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    grad_weights = p_fp32.data / fim_base / fim_slow_base
+                else:
+                    grad_weights = p.data / fim_base / fim_slow_base
 
                 rms = grad_weights.pow(2).mean().sqrt_().add_(curr_eps)
                 divisor = max(1, rms) / clip
@@ -163,6 +182,19 @@ class FishMonger(Optimizer):
                         full_step.mean(dim=tuple(range(1, full_step.dim())), keepdim=True).mul_(centralization)
                     )
 
-                p.data.add_(full_step, alpha=-lr / bias_correction)
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    p_fp32.data.add_(full_step, alpha=-lr / bias_correction)
+                else:
+                    p.data.add_(full_step, alpha=-lr / bias_correction)
+
+                # pack
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    copy_stochastic_(state["momentum"], momentum)
+                    copy_stochastic_(state["momentum_slow"], momentum_slow)
+                    copy_stochastic_(state["momentum_slow_squared"], momentum_slow_squared)
+                    copy_stochastic_(state["fim"], fim)
+                    if diff_amp:
+                        copy_stochastic_(state["ema_diff"], ema_diff)
+                    copy_stochastic_(p, p_fp32)
 
         return loss
