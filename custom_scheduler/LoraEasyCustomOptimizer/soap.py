@@ -3,15 +3,16 @@
 
 import math
 from itertools import chain
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 import torch
 
 from pytorch_optimizer.base.exception import NoSparseGradientError
 from pytorch_optimizer.base.optimizer import BaseOptimizer
-from pytorch_optimizer.base.types import BETAS, CLOSURE, DATA_FORMAT, DEFAULTS, LOSS, PARAMETERS
+from pytorch_optimizer.base.types import BETAS, CLOSURE, DEFAULTS, LOSS, PARAMETERS
 from pytorch_optimizer.optimizer.shampoo_utils import merge_small_dims
 
+DATA_FORMAT = Literal['channels_first', 'channels_last']
 
 class SOAP(BaseOptimizer):
     r"""Improving and Stabilizing Shampoo using Adam.
