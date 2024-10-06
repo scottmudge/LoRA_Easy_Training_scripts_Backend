@@ -82,7 +82,7 @@ class FishMonger(Optimizer):
                     # Previous grad
                     if diff_amp:
                         state["ema_diff"] = torch.zeros_like(p.data)
-                        state['previous_grad'] = grad.data.clone().mul_(-1.0)
+                        state["previous_grad"] = grad.data.clone().mul_(-1.0)
 
                 # unpack
                 if p.dtype in {torch.float16, torch.bfloat16}:
@@ -104,9 +104,9 @@ class FishMonger(Optimizer):
                 
                 if diff_amp:
                     if p.dtype in {torch.float16, torch.bfloat16}:
-                        grad_diff = state['previous_grad']
+                        grad_diff = state["previous_grad"].to(torch.float32)
                     else:
-                        grad_diff = state['previous_grad'].to(torch.float32)
+                        grad_diff = state["previous_grad"]
                     # grad_diff will contain the difference between prev grad and current grad
                     grad_diff.add_(grad)
 
@@ -116,7 +116,7 @@ class FishMonger(Optimizer):
                     if p.dtype in {torch.float16, torch.bfloat16}:
                         copy_stochastic_(state["previous_grad"], -grad)
                     else:
-                        state['previous_grad'].copy_(-grad)
+                        state["previous_grad"].copy_(-grad)
 
                 # Momentumize the gradient
                 momentum.mul_(beta1).add_(grad, alpha=1 - beta1)
