@@ -601,6 +601,7 @@ class FishMonger8BitBNB(Optimizer):
                     # Previous grad
                     if diff_amp:
                         state["ema_diff"] = quantize_blockwise(
+                            torch.zeros_like(p.data),
                             blocksize=group["group_size"],
                         )
                         state["previous_grad"] = quantize_blockwise(
