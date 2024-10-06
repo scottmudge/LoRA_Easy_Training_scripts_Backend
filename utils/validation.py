@@ -263,6 +263,10 @@ def validate_optimizer(args: dict) -> None:
             args["optimizer_type"] = "LoraEasyCustomOptimizer.fcompass.FCompass"
         case "fishmonger":
             args["optimizer_type"] = "LoraEasyCustomOptimizer.fishmonger.FishMonger"
+        case "fishmonger8bit":
+            args["optimizer_type"] = "LoraEasyCustomOptimizer.fishmonger.FishMonger8Bit"
+        case "fishmonger8bitbnb":
+            args["optimizer_type"] = "LoraEasyCustomOptimizer.fishmonger.FishMonger8BitBNB"
 
 
 def get_tags_from_file(file: str, tags: dict) -> None:

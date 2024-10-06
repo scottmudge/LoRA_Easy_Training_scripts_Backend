@@ -1,6 +1,59 @@
 import torch
 from torch.optim import Optimizer
+import torch.nn.functional as F
+from einops import rearrange
 from .utils import copy_stochastic_
+
+from bitsandbytes.functional import quantize_blockwise, dequantize_blockwise
+
+# @torch.compile
+def quantize(tensor, group_size=8, eps=1e-8, factor=3.2):
+    shape = tensor.shape
+    numel = tensor.numel()
+
+    # just in case it's not divisible by group size
+    padding = numel % group_size
+
+    if padding != 0:
+        tensor = rearrange(
+            F.pad(tensor.flatten(), (0, padding), "constant", 0), "(r g) -> r g", g=2
+        )
+    else:
+        tensor = rearrange(tensor.flatten(), "(r g) -> r g", g=group_size)
+    scale = tensor.abs().max(dim=-1).values.unsqueeze(dim=-1)
+    tensor /= scale + eps
+    sign = tensor.sign()
+
+    tensor = (
+        ((torch.pow(tensor.abs(), 1 / factor) * sign + 1) * 127.5)
+        .round()
+        .to(dtype=torch.uint8)
+    )
+    if padding != 0:
+        tensor = tensor.flatten()[:-padding]
+    tensor = tensor.view(shape)
+    return tensor, (scale, group_size, eps, factor, padding)
+
+
+# @torch.compile
+def dequantize(tensor, details, dtype=torch.float32):
+    scale, group_size, eps, factor, padding = details
+    shape = tensor.shape
+
+    if padding != 0:
+        tensor = rearrange(
+            F.pad(tensor.flatten(), (0, padding), "constant", 0), "(r g) -> r g", g=2
+        )
+    else:
+        tensor = rearrange(tensor.flatten(), "(r g) -> r g", g=group_size)
+    tensor = tensor.to(dtype=dtype) / 127.5 - 1
+    sign = tensor.sign()
+    tensor = torch.pow(tensor.abs(), factor) * sign * scale
+    if padding != 0:
+        tensor = tensor.flatten()[:-padding]
+    tensor = tensor.view(shape)
+
+    return tensor
 
 # FishMonger from https://github.com/Clybius/Personalized-Optimizers/blob/main/FishMonger.py by Clybius
 class FishMonger(Optimizer):
@@ -65,7 +118,7 @@ class FishMonger(Optimizer):
                     continue
                 grad = p.grad
                 if grad.is_sparse:
-                    raise RuntimeError("Compass does not support sparse gradients")
+                    raise RuntimeError("FishMonger does not support sparse gradients")
 
                 state = self.state[p]
 
@@ -195,6 +248,495 @@ class FishMonger(Optimizer):
                     copy_stochastic_(state["fim"], fim)
                     if diff_amp:
                         copy_stochastic_(state["ema_diff"], ema_diff)
+                    copy_stochastic_(p, p_fp32)
+
+        return loss
+
+# FishMonger from https://github.com/Clybius/Personalized-Optimizers/blob/main/FishMonger.py by Clybius
+class FishMonger8Bit(Optimizer):
+    r"""
+    FishMonger8Bit: Screw it, fisher everything.
+    Arguments:
+        params (iterable):
+            Iterable of parameters to optimize or dicts defining
+            parameter groups.
+        lr (float):
+            Learning rate parameter (default 0.001)
+        betas (Tuple[float, float, float], optional):
+            coefficients used for computing running averages of
+            fim, momentum, and its square (default: (0.9, 0.99, 0.999)).
+        eps (float):
+            Term added to the denominator outside of the root operation to
+            improve numerical stability. (default: 1e-8).
+        weight_decay (float):
+            Weight decay, i.e. a L2 penalty (default: 0.0).
+        clip (float):
+            Clip gradient to this value (default: 1.0).
+        centralization (float):
+            Center grad (default: 1.0).
+        diff_amp (float):
+            Accelerate the difference between the current and past gradient by this multiplicative value (default: 1.0).
+        diff_amp_beta (float):
+            Coefficient used for computing running average of the current and past gradients (default: 0.999).
+        quantization_group_size (int):
+            number of quant group (default: 8).
+        quantization_factor (float):
+            non linear quantization using x^f (default: 3.2)
+    """
+
+    def __init__(
+        self,
+        params,
+        lr=1e-3,
+        betas=(0.9, 0.99, 0.999),
+        eps=1e-8,
+        weight_decay=0.0,
+        clip=1.0,
+        centralization=1.0,
+        diff_amp=1.0,
+        diff_amp_beta=0.999,
+        quantization_group_size=8,
+        quantization_factor=3.2,
+    ):
+        defaults = dict(
+            lr=lr,
+            betas=betas,
+            eps=eps,
+            weight_decay=weight_decay,
+            clip=clip,
+            centralization=centralization,
+            diff_amp=diff_amp,
+            diff_amp_beta=diff_amp_beta,
+            group_size=quantization_group_size,
+            factor=quantization_factor,
+        )
+        super(FishMonger8Bit, self).__init__(params, defaults)
+
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            loss = closure()
+
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                grad = p.grad
+                if grad.is_sparse:
+                    raise RuntimeError("FishMonger8Bit does not support sparse gradients")
+
+                state = self.state[p]
+
+                # State initialization
+                diff_amp = group["diff_amp"]
+                if len(state) == 0:
+                    state["step"] = 0
+                    # Exponential moving average and squared exponential moving average gradient values
+                    state["momentum"] = quantize(
+                        torch.zeros_like(p.data),
+                        group_size=group["group_size"],
+                        factor=group["factor"],
+                    )
+                    state["momentum_slow"] = quantize(
+                        torch.zeros_like(p.data),
+                        group_size=group["group_size"],
+                        factor=group["factor"],
+                    )                    
+                    state["momentum_slow_squared"] = quantize(
+                        torch.zeros_like(p.data),
+                        group_size=group["group_size"],
+                        factor=group["factor"],
+                    )                    
+                    # Fisher Information Matrix
+                    state["fim"] = quantize(
+                        torch.zeros_like(p.data),
+                        group_size=group["group_size"],
+                        factor=group["factor"],
+                    )     
+                    # Previous grad
+                    if diff_amp:
+                        state["ema_diff"] = quantize(
+                            torch.zeros_like(p.data),
+                            group_size=group["group_size"],
+                            factor=group["factor"],
+                        )
+                        state["previous_grad"] = quantize(
+                            grad.data.clone().mul_(-1.0),
+                            group_size=group["group_size"],
+                            factor=group["factor"],
+                        )    
+
+                # unpack
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    p_fp32 = p.to(torch.float32)
+                    grad = grad.to(torch.float32).data
+                else:
+                    grad = grad.data
+
+                momentum = dequantize(*state["momentum"])
+                momentum_slow = dequantize(*state["momentum_slow"])
+                momentum_slow_squared = dequantize(*state["momentum_slow_squared"])
+                fim = dequantize(*state["fim"])
+                ema_diff = dequantize(*state["ema_diff"]) if diff_amp else 0
+
+                beta1, beta2, beta3 = group["betas"]
+                lr = group["lr"]
+                weight_decay = group["weight_decay"]
+                clip = 1.0 if (group["clip"] <= 0) else group["clip"]
+                centralization = group["centralization"]
+                state["step"] += 1
+                
+                if diff_amp:
+                    grad_diff = dequantize(*state["previous_grad"])
+                    # grad_diff will contain the difference between prev grad and current grad
+                    grad_diff.add_(grad)
+
+                    # Smooth the difference between previous grad and current grad
+                    ema_diff.mul_(group["diff_amp_beta"]).add_(grad_diff, alpha=1 - group["diff_amp_beta"])
+
+                    state["previous_grad"] = quantize(
+                        -grad,
+                        group_size=group["group_size"],
+                        factor=group["factor"],
+                    )
+
+                # Momentumize the gradient
+                momentum.mul_(beta1).add_(grad, alpha=1 - beta1)
+
+                # bias correction step size
+                # soft warmup
+                fim_beta = (beta2**state["step"] - beta2) / (beta2**state["step"] - 1.0) # Start at 0 beta (I believe this is from Adafactor?)
+                bias_correction = 1 - beta1**state["step"]
+
+                # Update fim
+                fim.mul_(fim_beta).addcmul_(momentum, momentum, value=1 - fim_beta)
+
+                curr_eps = group["eps"] # To find a better adaptive epsilon later, if at all...
+
+                fim_base = fim.sqrt() + curr_eps
+
+                # Compute natural gradient from momentum
+                grad_nat = momentum / fim_base
+
+                # Clip with rms
+                rms = grad_nat.pow(2).mean().sqrt_().add_(curr_eps)
+                divisor = max(1, rms) / clip
+                grad_nat.div_(divisor)
+
+                # Moving average of natural momentum
+                momentum_slow.mul_(beta1).add_(grad_nat, alpha=1 - beta1)
+
+                # Update momentumized natural fim
+                squared_fim_beta = (beta3**state["step"] - beta3) / (beta3**state["step"] - 1.0)
+                momentum_slow_squared.mul_(squared_fim_beta).addcmul_(momentum_slow, momentum_slow, value=1 - squared_fim_beta)
+
+                fim_slow_base = momentum_slow_squared.sqrt() + curr_eps
+
+                # Compute natural gradient using both FIMs
+                grad_nat_2 = grad / fim_base / fim_slow_base
+
+                rms = grad_nat_2.pow(2).mean().sqrt_().add_(curr_eps)
+                divisor = max(1, rms) / clip
+                grad_nat_2.div_(divisor)
+
+                # Weight decay
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    grad_weights = p_fp32.data / fim_base / fim_slow_base
+                else:
+                    grad_weights = p.data / fim_base / fim_slow_base
+
+                rms = grad_weights.pow(2).mean().sqrt_().add_(curr_eps)
+                divisor = max(1, rms) / clip
+                grad_weights.div_(divisor)
+
+                # Differential amplification
+                diff_weights = ema_diff / fim_base / fim_slow_base if diff_amp else 0
+                if diff_amp:
+                    rms = diff_weights.pow(2).mean().sqrt_().add_(curr_eps)
+                    divisor = max(1, rms) / clip
+                    diff_weights.div_(divisor)
+                
+                full_step = grad_nat_2 + (weight_decay * grad_weights) - (diff_amp * diff_weights)
+
+                # Centralize the gradient vector
+                if centralization != 0 and full_step.dim() > 1:
+                    full_step.sub_(
+                        full_step.mean(dim=tuple(range(1, full_step.dim())), keepdim=True).mul_(centralization)
+                    )
+
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    p_fp32.data.add_(full_step, alpha=-lr / bias_correction)
+                else:
+                    p.data.add_(full_step, alpha=-lr / bias_correction)
+
+                # pack
+                state["momentum"] = quantize(
+                    momentum,
+                    group_size=group["group_size"],
+                    factor=group["factor"],
+                )
+                state["momentum_slow"] = quantize(
+                    momentum_slow,
+                    group_size=group["group_size"],
+                    factor=group["factor"],
+                )                    
+                state["momentum_slow_squared"] = quantize(
+                    momentum_slow_squared,
+                    group_size=group["group_size"],
+                    factor=group["factor"],
+                )                    
+                # Fisher Information Matrix
+                state["fim"] = quantize(
+                    fim,
+                    group_size=group["group_size"],
+                    factor=group["factor"],
+                )     
+                # Previous grad
+                if diff_amp:
+                    state["ema_diff"] = quantize(
+                        ema_diff,
+                        group_size=group["group_size"],
+                        factor=group["factor"],
+                    )
+
+                # pack
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    copy_stochastic_(p, p_fp32)
+
+        return loss
+
+# FishMonger from https://github.com/Clybius/Personalized-Optimizers/blob/main/FishMonger.py by Clybius
+class FishMonger8BitBNB(Optimizer):
+    r"""
+    FishMonger8BitBNB: Screw it, fisher everything.
+    Arguments:
+        params (iterable):
+            Iterable of parameters to optimize or dicts defining
+            parameter groups.
+        lr (float):
+            Learning rate parameter (default 0.001)
+        betas (Tuple[float, float, float], optional):
+            coefficients used for computing running averages of
+            fim, momentum, and its square (default: (0.9, 0.99, 0.999)).
+        eps (float):
+            Term added to the denominator outside of the root operation to
+            improve numerical stability. (default: 1e-8).
+        weight_decay (float):
+            Weight decay, i.e. a L2 penalty (default: 0.0).
+        clip (float):
+            Clip gradient to this value (default: 1.0).
+        centralization (float):
+            Center grad (default: 1.0).
+        diff_amp (float):
+            Accelerate the difference between the current and past gradient by this multiplicative value (default: 1.0).
+        diff_amp_beta (float):
+            Coefficient used for computing running average of the current and past gradients (default: 0.999).
+        quantization_group_size (int):
+            number of quant group (default: 64).
+    """
+
+    def __init__(
+        self,
+        params,
+        lr=1e-3,
+        betas=(0.9, 0.99, 0.999),
+        eps=1e-8,
+        weight_decay=0.0,
+        clip=1.0,
+        centralization=1.0,
+        diff_amp=1.0,
+        diff_amp_beta=0.999,
+        quantization_group_size=64,
+    ):
+        defaults = dict(
+            lr=lr,
+            betas=betas,
+            eps=eps,
+            weight_decay=weight_decay,
+            clip=clip,
+            centralization=centralization,
+            diff_amp=diff_amp,
+            diff_amp_beta=diff_amp_beta,
+            group_size=quantization_group_size,
+        )
+        super(FishMonger8BitBNB, self).__init__(params, defaults)
+
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            loss = closure()
+
+        for group in self.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                grad = p.grad
+                if grad.is_sparse:
+                    raise RuntimeError("FishMonger8BitBNB does not support sparse gradients")
+
+                state = self.state[p]
+
+                # State initialization
+                diff_amp = group["diff_amp"]
+                if len(state) == 0:
+                    state["step"] = 0
+                    # Exponential moving average and squared exponential moving average gradient values
+                    state["momentum"] = quantize_blockwise(
+                        torch.zeros_like(p.data),
+                        blocksize=group["group_size"],
+                    )
+                    state["momentum_slow"] = quantize_blockwise(
+                        torch.zeros_like(p.data),
+                        blocksize=group["group_size"],
+                    )                    
+                    state["momentum_slow_squared"] = quantize_blockwise(
+                        torch.zeros_like(p.data),
+                        blocksize=group["group_size"],
+                    )                    
+                    # Fisher Information Matrix
+                    state["fim"] = quantize_blockwise(
+                        torch.zeros_like(p.data),
+                        blocksize=group["group_size"],
+                    )     
+                    # Previous grad
+                    if diff_amp:
+                        state["ema_diff"] = quantize_blockwise(
+                            blocksize=group["group_size"],
+                        )
+                        state["previous_grad"] = quantize_blockwise(
+                            grad.data.clone().mul_(-1.0),
+                            blocksize=group["group_size"],
+                        )    
+
+                # unpack
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    p_fp32 = p.to(torch.float32)
+                    grad = grad.to(torch.float32).data
+                else:
+                    grad = grad.data
+
+                momentum = dequantize_blockwise(*state["momentum"])
+                momentum_slow = dequantize_blockwise(*state["momentum_slow"])
+                momentum_slow_squared = dequantize_blockwise(*state["momentum_slow_squared"])
+                fim = dequantize_blockwise(*state["fim"])
+                ema_diff = dequantize_blockwise(*state["ema_diff"]) if diff_amp else 0
+
+                beta1, beta2, beta3 = group["betas"]
+                lr = group["lr"]
+                weight_decay = group["weight_decay"]
+                clip = 1.0 if (group["clip"] <= 0) else group["clip"]
+                centralization = group["centralization"]
+                state["step"] += 1
+                
+                if diff_amp:
+                    grad_diff = dequantize_blockwise(*state["previous_grad"])
+                    # grad_diff will contain the difference between prev grad and current grad
+                    grad_diff.add_(grad)
+
+                    # Smooth the difference between previous grad and current grad
+                    ema_diff.mul_(group["diff_amp_beta"]).add_(grad_diff, alpha=1 - group["diff_amp_beta"])
+
+                    state["previous_grad"] = quantize_blockwise(
+                        -grad,
+                        blocksize=group["group_size"],
+                    )
+
+                # Momentumize the gradient
+                momentum.mul_(beta1).add_(grad, alpha=1 - beta1)
+
+                # bias correction step size
+                # soft warmup
+                fim_beta = (beta2**state["step"] - beta2) / (beta2**state["step"] - 1.0) # Start at 0 beta (I believe this is from Adafactor?)
+                bias_correction = 1 - beta1**state["step"]
+
+                # Update fim
+                fim.mul_(fim_beta).addcmul_(momentum, momentum, value=1 - fim_beta)
+
+                curr_eps = group["eps"] # To find a better adaptive epsilon later, if at all...
+
+                fim_base = fim.sqrt() + curr_eps
+
+                # Compute natural gradient from momentum
+                grad_nat = momentum / fim_base
+
+                # Clip with rms
+                rms = grad_nat.pow(2).mean().sqrt_().add_(curr_eps)
+                divisor = max(1, rms) / clip
+                grad_nat.div_(divisor)
+
+                # Moving average of natural momentum
+                momentum_slow.mul_(beta1).add_(grad_nat, alpha=1 - beta1)
+
+                # Update momentumized natural fim
+                squared_fim_beta = (beta3**state["step"] - beta3) / (beta3**state["step"] - 1.0)
+                momentum_slow_squared.mul_(squared_fim_beta).addcmul_(momentum_slow, momentum_slow, value=1 - squared_fim_beta)
+
+                fim_slow_base = momentum_slow_squared.sqrt() + curr_eps
+
+                # Compute natural gradient using both FIMs
+                grad_nat_2 = grad / fim_base / fim_slow_base
+
+                rms = grad_nat_2.pow(2).mean().sqrt_().add_(curr_eps)
+                divisor = max(1, rms) / clip
+                grad_nat_2.div_(divisor)
+
+                # Weight decay
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    grad_weights = p_fp32.data / fim_base / fim_slow_base
+                else:
+                    grad_weights = p.data / fim_base / fim_slow_base
+
+                rms = grad_weights.pow(2).mean().sqrt_().add_(curr_eps)
+                divisor = max(1, rms) / clip
+                grad_weights.div_(divisor)
+
+                # Differential amplification
+                diff_weights = ema_diff / fim_base / fim_slow_base if diff_amp else 0
+                if diff_amp:
+                    rms = diff_weights.pow(2).mean().sqrt_().add_(curr_eps)
+                    divisor = max(1, rms) / clip
+                    diff_weights.div_(divisor)
+                
+                full_step = grad_nat_2 + (weight_decay * grad_weights) - (diff_amp * diff_weights)
+
+                # Centralize the gradient vector
+                if centralization != 0 and full_step.dim() > 1:
+                    full_step.sub_(
+                        full_step.mean(dim=tuple(range(1, full_step.dim())), keepdim=True).mul_(centralization)
+                    )
+
+                if p.dtype in {torch.float16, torch.bfloat16}:
+                    p_fp32.data.add_(full_step, alpha=-lr / bias_correction)
+                else:
+                    p.data.add_(full_step, alpha=-lr / bias_correction)
+
+                # pack
+                state["momentum"] = quantize_blockwise(
+                    momentum,
+                    blocksize=group["group_size"],
+                )
+                state["momentum_slow"] = quantize_blockwise(
+                    momentum_slow,
+                    blocksize=group["group_size"],
+                )                    
+                state["momentum_slow_squared"] = quantize_blockwise(
+                    momentum_slow_squared,
+                    blocksize=group["group_size"],
+                )                    
+                # Fisher Information Matrix
+                state["fim"] = quantize_blockwise(
+                    fim,
+                    blocksize=group["group_size"],
+                )     
+                # Previous grad
+                if diff_amp:
+                    state["ema_diff"] = quantize_blockwise(
+                        ema_diff,
+                        blocksize=group["group_size"],
+                    )
+
+                # pack
+                if p.dtype in {torch.float16, torch.bfloat16}:
                     copy_stochastic_(p, p_fp32)
 
         return loss
