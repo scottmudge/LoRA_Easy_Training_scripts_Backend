@@ -1,5 +1,8 @@
 import torch
+from typing import Any, Dict, List, Tuple, Union, Type
+from torch.optim import Optimizer
 
+OPTIMIZER = Type[Optimizer]
 
 def copy_stochastic_(target: torch.Tensor, source: torch.Tensor):
     # thanks to Nerogar for fast stochastic pytorch implementation

@@ -107,6 +107,9 @@ class FishMonger(Optimizer):
         )
         super(FishMonger, self).__init__(params, defaults)
 
+    def __str__(self) -> str:
+        return 'FishMonger'
+
     def step(self, closure=None):
         loss = None
         if closure is not None:
@@ -311,6 +314,9 @@ class FishMonger8Bit(Optimizer):
             factor=quantization_factor,
         )
         super(FishMonger8Bit, self).__init__(params, defaults)
+
+    def __str__(self) -> str:
+        return 'FishMonger8Bit'
 
     def step(self, closure=None):
         loss = None
@@ -560,6 +566,9 @@ class FishMonger8BitBNB(Optimizer):
             group_size=quantization_group_size,
         )
         super(FishMonger8BitBNB, self).__init__(params, defaults)
+
+    def __str__(self) -> str:
+        return 'FishMonger8BitBNB'
 
     def step(self, closure=None):
         loss = None

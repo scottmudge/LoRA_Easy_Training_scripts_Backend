@@ -45,6 +45,9 @@ class LPFAdamW(Optimizer):
         )
         super(LPFAdamW, self).__init__(params, defaults)
 
+    def __str__(self) -> str:
+        return 'LPFAdamW'
+
     def step(self, closure=None):
         loss = closure() if closure is not None else None
         for group in self.param_groups:

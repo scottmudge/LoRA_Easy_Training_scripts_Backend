@@ -52,6 +52,9 @@ class FCompass(Optimizer):
         )
         super(FCompass, self).__init__(params, defaults)
 
+    def __str__(self) -> str:
+        return 'FCompass'
+
     def step(self, closure=None):
         loss = None
         if closure is not None:

@@ -54,6 +54,9 @@ class FARMSCrop(Optimizer):
         )
         super(FARMSCrop, self).__init__(params, defaults)
 
+    def __str__(self) -> str:
+        return 'FARMSCrop'
+
     def step(self, closure=None):
         loss = None
         if closure is not None:

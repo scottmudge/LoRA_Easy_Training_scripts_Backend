@@ -49,6 +49,9 @@ class Compass(Optimizer):
         )
         super(Compass, self).__init__(params, defaults)
 
+    def __str__(self) -> str:
+        return 'Compass'
+
     def step(self, closure=None):
         loss = closure() if closure is not None else None
         for group in self.param_groups:

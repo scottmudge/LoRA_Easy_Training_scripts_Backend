@@ -43,6 +43,9 @@ class RMSProp(Optimizer):
         )
         super(RMSProp, self).__init__(params, defaults)
 
+    def __str__(self) -> str:
+        return 'RMSProp'
+
     def step(self, closure=None):
         loss = closure() if closure is not None else None
         for group in self.param_groups:
