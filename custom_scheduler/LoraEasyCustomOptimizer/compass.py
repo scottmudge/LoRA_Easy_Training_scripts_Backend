@@ -14,17 +14,17 @@ class Compass(Optimizer):
             Iterable of parameters to optimize or dicts defining
             parameter groups.
         lr (float):
-            Learning rate parameter (default 0.0025)
+            Learning rate parameter (default 7e-5)
         betas (Tuple[float, float], optional):
             coefficients used for computing running averages of
-            gradient and its square (default: (0.99, 0.999)).
+            gradient and its square (default: (0.98, 0.999)).
         amp_fac (float):
             amplification factor for the first moment filter (default: 2).
         eps (float):
             Term added to the denominator outside of the root operation to
             improve numerical stability. (default: 1e-8).
         weight_decay (float):
-            Weight decay, i.e. a L2 penalty (default: 0).
+            Weight decay, i.e. a L2 penalty (default: 0.001).
         centralization (float):
             center model grad (default: 0).
     """
@@ -32,11 +32,11 @@ class Compass(Optimizer):
     def __init__(
         self,
         params,
-        lr=1e-3,
-        betas=(0.99, 0.999),
+        lr=7e-5, #Original default 1e-3
+        betas=(0.99, 0.999), #Original default 0.98, 0.999
         amp_fac=2,
         eps=1e-8,
-        weight_decay=0,
+        weight_decay=0.001, #Original default 0
         centralization=0,
     ):
         defaults = dict(
@@ -89,8 +89,10 @@ class Compass(Optimizer):
                 state["step"] += 1
 
                 # center the gradient vector
-                if centralization != 0:
-                    grad.sub_(grad.mean(dim=tuple(range(1, grad.dim())), keepdim=True).mul_(centralization))
+                if centralization != 0 and grad.dim() > 1:
+                    grad.sub_(
+                        grad.mean(dim=tuple(range(1, grad.dim())), keepdim=True).mul_(centralization)
+                    )
 
                 # bias correction step size
                 # soft warmup

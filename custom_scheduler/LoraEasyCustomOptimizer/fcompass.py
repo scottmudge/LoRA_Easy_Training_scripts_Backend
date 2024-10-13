@@ -5,6 +5,7 @@ from .utils import copy_stochastic_
 # Fisher optimizer (FAdam) from https://github.com/lessw2020/FAdam_PyTorch/blob/main/fadam.py by Less Wright (lessw2020), I may not know them, but I am aware of their expertise. Many thanks for your contributing work!
 # Original optimizer (Compass) from https://github.com/lodestone-rock/compass_optimizer/blob/main/compass.py by lodestone-rock, many thanks for their optim, help, and ideas!
 # FCompass from https://github.com/Clybius/Personalized-Optimizers/blob/main/FCompass.py by Clybius
+# Defaults retuned based on SDXL lora training tests
 class FCompass(Optimizer):
     r"""
     Fisher Compass: Utilizing approximate fisher information to accelerate training. (Applied onto Compass).
@@ -13,17 +14,17 @@ class FCompass(Optimizer):
             Iterable of parameters to optimize or dicts defining
             parameter groups.
         lr (float):
-            Learning rate parameter (default 0.001)
+            Learning rate parameter (default 7e-05)
         betas (Tuple[float, float], optional):
             coefficients used for computing running averages of
-            gradient and its square (default: (0.99, 0.999)).
+            gradient and its square (default: (0.98, 0.999)).
         amp_fac (float):
             amplification factor for the first moment filter (default: 2).
         eps (float):
             Term added to the denominator outside of the root operation to
             improve numerical stability. (default: 1e-8).
         weight_decay (float):
-            Weight decay, i.e. a L2 penalty (default: 0.1).
+            Weight decay, i.e. a L2 penalty (default: 0.001).
         clip (float):
             Clip gradient to this value (default: 1.0).
         centralization (float):
@@ -33,11 +34,11 @@ class FCompass(Optimizer):
     def __init__(
         self,
         params,
-        lr=1e-3,
-        betas=(0.99, 0.999),
+        lr=7e-05, #Original default 1e-3
+        betas=(0.98, 0.999), #Original default 0.99, 0.999
         amp_fac=2,
         eps=1e-8,
-        weight_decay=0.1,
+        weight_decay=0.001, #Original default 0.1
         clip=1.0,
         centralization=1.0,
     ):
@@ -66,7 +67,7 @@ class FCompass(Optimizer):
                     continue
                 grad = p.grad
                 if grad.is_sparse:
-                    raise RuntimeError("Compass does not support sparse gradients")
+                    raise RuntimeError("FCompass does not support sparse gradients")
 
                 state = self.state[p]
 

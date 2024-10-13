@@ -87,8 +87,10 @@ class LPFAdamW(Optimizer):
                 state["step"] += 1
 
                 # center the gradient vector
-                if centralization != 0:
-                    grad.sub_(grad.mean(dim=tuple(range(1, grad.dim())), keepdim=True).mul_(centralization))
+                if centralization != 0 and grad.dim() > 1:
+                    grad.sub_(
+                        grad.mean(dim=tuple(range(1, grad.dim())), keepdim=True).mul_(centralization)
+                    )
 
                 # bias correction step size
                 # soft warmup
