@@ -184,7 +184,7 @@ def validate_restarts(args: dict, dataset: dict) -> None:
         )
     steps = steps // args["lr_scheduler_num_cycles"]
     args["lr_scheduler_args"].append(f"first_cycle_max_steps={steps}")
-    del args["lr_scheduler_num_cycles"]
+    #del args["lr_scheduler_num_cycles"]
 
 
 def validate_warmup_ratio(args: dict, dataset: dict) -> None:
