@@ -180,7 +180,7 @@ class CAMEFullSR(BaseOptimizer):
                 else:
                     exp_avg = state["exp_avg"]
 
-                copy_stochastic_(state['RMS'], self.get_rms(p))
+                state['RMS'] = self.get_rms(p)
 
                 # center the gradient vector
                 if centralization != 0 and grad.dim() > 1:
