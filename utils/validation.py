@@ -4,6 +4,7 @@ import json
 from library.train_util import BucketManager
 from PIL import Image
 import math
+from LoraEasyCustomOptimizer import OPTIMIZERS
 
 
 def validate(args: dict) -> tuple[bool, bool, list[str], dict, dict]:
@@ -241,32 +242,14 @@ def validate_save_tags(dataset: dict) -> dict:
 
 def validate_optimizer(args: dict) -> None:
     config = json.loads(Path("config.json").read_text())
-    match args["optimizer_type"].lower():
-        case "came":
-            if "colab" in config and config["colab"]:
-                args["optimizer_type"] = "came_pytorch.CAME.CAME"
-            else:
-                args["optimizer_type"] = "LoraEasyCustomOptimizer.came.CAME"
-        case "compass":
-            args["optimizer_type"] = "LoraEasyCustomOptimizer.compass.Compass"
-        case "lpfadamw":
-            args["optimizer_type"] = "LoraEasyCustomOptimizer.lpfadamw.LPFAdamW"
-        case "rmsprop":
-            args["optimizer_type"] = "LoraEasyCustomOptimizer.rmsprop.RMSProp"
-        case "scalableshampoo":
-            args["optimizer_type"] = "LoraEasyCustomOptimizer.shampoo.ScalableShampoo"
-        case "soap":
-            args["optimizer_type"] = "LoraEasyCustomOptimizer.soap.SOAP"
-        case "ademamix":
-            args["optimizer_type"] = "LoraEasyCustomOptimizer.ademamix.AdEMAMix"
-        case "fcompass":
-            args["optimizer_type"] = "LoraEasyCustomOptimizer.fcompass.FCompass"
-        case "fishmonger":
-            args["optimizer_type"] = "LoraEasyCustomOptimizer.fishmonger.FishMonger"
-        case "fishmonger8bit":
-            args["optimizer_type"] = "LoraEasyCustomOptimizer.fishmonger.FishMonger8Bit"
-        case "farmscrop":
-            args["optimizer_type"] = "LoraEasyCustomOptimizer.farmscrop.FARMSCrop"
+    opt_type_lower = args["optimizer_type"].lower()
+    if opt_type_lower == "came":
+        if "colab" in config and config["colab"]:
+            args["optimizer_type"] = "came_pytorch.CAME.CAME"
+        else:
+            args["optimizer_type"] = f"{OPTIMIZERS[opt_type_lower].__module__}.{OPTIMIZERS[opt_type_lower].__qualname__}"
+    else:
+        args["optimizer_type"] = f"{OPTIMIZERS[opt_type_lower].__module__}.{OPTIMIZERS[opt_type_lower].__qualname__}"
 
 
 def get_tags_from_file(file: str, tags: dict) -> None:
