@@ -1,59 +1,9 @@
 import torch
 from torch.optim import Optimizer
-import torch.nn.functional as F
-from einops import rearrange
-from .utils import copy_stochastic_
+
+from .utils import copy_stochastic_, quantize, dequantize
 
 from bitsandbytes.functional import quantize_blockwise, dequantize_blockwise
-
-# @torch.compile
-def quantize(tensor, group_size=8, eps=1e-8, factor=3.2):
-    shape = tensor.shape
-    numel = tensor.numel()
-
-    # just in case it's not divisible by group size
-    padding = numel % group_size
-
-    if padding != 0:
-        tensor = rearrange(
-            F.pad(tensor.flatten(), (0, padding), "constant", 0), "(r g) -> r g", g=2
-        )
-    else:
-        tensor = rearrange(tensor.flatten(), "(r g) -> r g", g=group_size)
-    scale = tensor.abs().max(dim=-1).values.unsqueeze(dim=-1)
-    tensor /= scale + eps
-    sign = tensor.sign()
-
-    tensor = (
-        ((torch.pow(tensor.abs(), 1 / factor) * sign + 1) * 127.5)
-        .round()
-        .to(dtype=torch.uint8)
-    )
-    if padding != 0:
-        tensor = tensor.flatten()[:-padding]
-    tensor = tensor.view(shape)
-    return tensor, (scale, group_size, eps, factor, padding)
-
-
-# @torch.compile
-def dequantize(tensor, details, dtype=torch.float32):
-    scale, group_size, eps, factor, padding = details
-    shape = tensor.shape
-
-    if padding != 0:
-        tensor = rearrange(
-            F.pad(tensor.flatten(), (0, padding), "constant", 0), "(r g) -> r g", g=2
-        )
-    else:
-        tensor = rearrange(tensor.flatten(), "(r g) -> r g", g=group_size)
-    tensor = tensor.to(dtype=dtype) / 127.5 - 1
-    sign = tensor.sign()
-    tensor = torch.pow(tensor.abs(), factor) * sign * scale
-    if padding != 0:
-        tensor = tensor.flatten()[:-padding]
-    tensor = tensor.view(shape)
-
-    return tensor
 
 # FishMonger from https://github.com/Clybius/Personalized-Optimizers/blob/main/FishMonger.py by Clybius
 class FishMonger(Optimizer):
