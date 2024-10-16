@@ -5,7 +5,7 @@ from .utils import copy_stochastic_
 # Fisher optimizer (FAdam) from https://github.com/lessw2020/FAdam_PyTorch/blob/main/fadam.py by Less Wright (lessw2020), I may not know them, but I am aware of their expertise. Many thanks for your contributing work!
 # Original optimizer (Compass) from https://github.com/lodestone-rock/compass_optimizer/blob/main/compass.py by lodestone-rock, many thanks for their optim, help, and ideas!
 # FCompass from https://github.com/Clybius/Personalized-Optimizers/blob/main/FCompass.py by Clybius
-# Defaults retuned based on SDXL lora training tests
+# Defaults tuned for lora training based on testing
 class FCompass(Optimizer):
     r"""
     Fisher Compass: Utilizing approximate fisher information to accelerate training. (Applied onto Compass).
