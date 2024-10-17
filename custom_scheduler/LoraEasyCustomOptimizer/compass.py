@@ -425,6 +425,8 @@ class Compass8BitBNB(Optimizer):
                         blocksize=group["group_size"],
                     )
 
+                p_fp32 = p
+
                 # unpack
                 if p.dtype in {torch.float16, torch.bfloat16}:
                     grad = grad.to(torch.float32)
