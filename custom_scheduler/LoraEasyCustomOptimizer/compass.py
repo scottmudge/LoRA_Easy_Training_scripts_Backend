@@ -107,7 +107,7 @@ class Compass(Optimizer):
                 lr = group["lr"]
                 weight_decay = group["weight_decay"]
                 weight_decouple = group["weight_decouple"],
-                fixed_decay = group["weight_decouple"]
+                fixed_decay = group["fixed_decay"]
                 centralization = group["centralization"]
                 eps = group["eps"]
                 clip = group["clip"]
