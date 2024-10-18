@@ -21,6 +21,7 @@ class AdEMAMix(BaseOptimizer):
     :param weight_decay: float. weight decay (L2 penalty).
     :param weight_decouple: bool. the optimizer uses decoupled weight decay as in AdamW.
     :param fixed_decay: bool. fix weight decay.
+    :param clip: float. threshold of root-mean-square of gradient update.
     :param alpha: float. usually between 4 and 10 would work well.
     :param t_alpha_beta3: Optional[float]. total number of iterations is preferred when needed.
     :param eps: float. term added to the denominator to improve numerical stability.
@@ -34,6 +35,7 @@ class AdEMAMix(BaseOptimizer):
         weight_decay: float = 0.0,
         weight_decouple: bool = False,
         fixed_decay: bool = False,
+        clip=0.0,
         alpha: float = 5.0,
         t_alpha_beta3: Optional[float] = None,
         eps: float = 1e-8,
@@ -51,6 +53,7 @@ class AdEMAMix(BaseOptimizer):
             'betas': betas,
             'weight_decay': weight_decay,
             'weight_decouple': weight_decouple,
+            'clip': clip,
             'fixed_decay': fixed_decay,
             'alpha': alpha,
             't_alpha_beta3': t_alpha_beta3,
@@ -92,6 +95,11 @@ class AdEMAMix(BaseOptimizer):
             ),
             beta3,
         )
+    
+    @staticmethod
+    def get_rms(x: torch.Tensor) -> float:
+        r"""Get RMS."""
+        return x.norm(2) / math.sqrt(x.numel())
 
     @torch.no_grad()
     def step(self, closure: CLOSURE = None) -> LOSS:
@@ -120,13 +128,13 @@ class AdEMAMix(BaseOptimizer):
                     
                 if p.grad.is_sparse:
                     raise NoSparseGradientError(str(self))
+                
+                p_fp32 = p
+                grad = p.grad
 
                 if p.dtype in {torch.float16, torch.bfloat16}:
-                    grad = p.grad.to(torch.float32)
-                    p_fp32 = p.clone().to(torch.float32)
-                else:
-                    grad = p.grad
-                    p_fp32 = p
+                    grad = grad.to(torch.float32)
+                    p_fp32 = p.to(torch.float32)
                 
                 state = self.state[p]
 
@@ -135,19 +143,17 @@ class AdEMAMix(BaseOptimizer):
                     state['exp_avg_sq'] = torch.zeros_like(p)
                     state['exp_avg_slow'] = torch.zeros_like(p)
 
-                self.apply_weight_decay(
-                    p=p_fp32,
-                    grad=grad,
-                    lr=group['lr'],
-                    weight_decay=group['weight_decay'],
-                    weight_decouple=group['weight_decouple'],
-                    fixed_decay=group['fixed_decay'],
-                )
+                eps = group['eps']
+                clip = group['clip']
+
+                # Clip the gradient 
+                if clip > 0.0:
+                    grad.div_((self.get_rms(grad).add_(eps) / clip).clamp_(min=1.0))
+
+                exp_avg, exp_avg_sq, exp_avg_slow = state['exp_avg'], state['exp_avg_sq'], state['exp_avg_slow']
 
                 if p.dtype in {torch.float16, torch.bfloat16}:
-                    exp_avg, exp_avg_sq, exp_avg_slow = state['exp_avg'].to(torch.float32), state['exp_avg_sq'].to(torch.float32), state['exp_avg_slow'].to(torch.float32)
-                else:
-                    exp_avg, exp_avg_sq, exp_avg_slow = state['exp_avg'], state['exp_avg_sq'], state['exp_avg_slow']
+                    exp_avg, exp_avg_sq, exp_avg_slow = exp_avg.to(torch.float32), exp_avg_sq.to(torch.float32), exp_avg_slow.to(torch.float32)
 
                 exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
                 exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
@@ -155,9 +161,18 @@ class AdEMAMix(BaseOptimizer):
 
                 de_nom = (exp_avg_sq.sqrt() / bias_correction2_sq).add_(group['eps'])
 
-                step_size = group['lr'] / bias_correction1
+                update = (exp_avg.div(bias_correction1) + alpha_t * exp_avg_slow) / de_nom
 
-                p_fp32.addcdiv_(exp_avg + alpha_t * exp_avg_slow, de_nom, value=-step_size)
+                self.apply_weight_decay(
+                    p=p_fp32,
+                    grad=update,
+                    lr=group['lr'],
+                    weight_decay=group['weight_decay'],
+                    weight_decouple=group['weight_decouple'],
+                    fixed_decay=group['fixed_decay'],
+                )
+
+                p_fp32.add_(-group['lr'] * update)
                 
                 if p.dtype in {torch.float16, torch.bfloat16}:
                     copy_stochastic_(state["exp_avg"], exp_avg)

@@ -178,14 +178,14 @@ class Compass8Bit(Optimizer):
         fixed_decay (bool): 
             fix weight decay (default: false).
         clip (float):
-            Clip gradient to this value (default: 1.0).
+            Clip gradient to this value (default: 0.0).
         amp_fac (float):
             amplification factor for the first moment filter (default: 2).
         eps (float):
             Term added to the denominator outside of the root operation to
             improve numerical stability. (default: 1e-8).
         centralization (float):
-            center model grad (default: 1.0).
+            center model grad (default: 0.0).
         quantization_group_size (int):
             number of quant group (default: 8).
         quantization_factor (float):
@@ -200,10 +200,10 @@ class Compass8Bit(Optimizer):
         weight_decay=0.001, #Original default 0
         weight_decouple=True,
         fixed_decay=False,
-        clip=1.0,  #Original default 0.0, 1.0 to try to address numerical instablity
+        clip=0.0,
         amp_fac=2,
         eps=1e-8,
-        centralization=1.0,  #Original default 0.0, 1.0 to try to address numerical instablity
+        centralization=1.0,
         quantization_group_size=8,
         quantization_factor=3.2,
     ):
@@ -348,14 +348,14 @@ class Compass8BitBNB(Optimizer):
         fixed_decay (bool): 
             fix weight decay (default: false).
         clip (float):
-            Clip gradient to this value (default: 1.0).
+            Clip gradient to this value (default: 0.0).
         amp_fac (float):
             amplification factor for the first moment filter (default: 2).
         eps (float):
             Term added to the denominator outside of the root operation to
             improve numerical stability. (default: 1e-8).
         centralization (float):
-            center model grad (default: 1.0).
+            center model grad (default: 0.0).
         quantization_group_size (int):
             number of quant group (default: 64).
     """
@@ -368,10 +368,10 @@ class Compass8BitBNB(Optimizer):
         weight_decay=0.001, #Original default 0
         weight_decouple=True,
         fixed_decay=False,
-        clip=1.0,  #Original default 0.0, 1.0 to try to address numerical instablity
+        clip=0.0,
         amp_fac=2,
         eps=1e-8,
-        centralization=1.0,  #Original default 0.0, 1.0 to try to address numerical instablity
+        centralization=0.0,
         quantization_group_size=64,
     ):
         defaults = dict(
