@@ -25,6 +25,7 @@ class AdEMAMix(BaseOptimizer):
     :param alpha: float. usually between 4 and 10 would work well.
     :param t_alpha_beta3: Optional[float]. total number of iterations is preferred when needed.
     :param eps: float. term added to the denominator to improve numerical stability.
+    :param centralization: float. center model grad 
     """
 
     def __init__(
@@ -39,6 +40,7 @@ class AdEMAMix(BaseOptimizer):
         alpha: float = 5.0,
         t_alpha_beta3: Optional[float] = None,
         eps: float = 1e-8,
+        centralization=0.0,
         **kwargs,
     ):
         self.validate_learning_rate(lr)
@@ -47,6 +49,8 @@ class AdEMAMix(BaseOptimizer):
         self.validate_non_negative(t_alpha_beta3, 't_alpha_beta3')
         self.validate_non_negative(weight_decay, 'weight_decay')
         self.validate_non_negative(eps, 'eps')
+        self.validate_non_negative(clip, 'clip')
+        self.validate_non_negative(centralization, 'centralization')
 
         defaults: DEFAULTS = {
             'lr': lr,
@@ -58,6 +62,7 @@ class AdEMAMix(BaseOptimizer):
             'alpha': alpha,
             't_alpha_beta3': t_alpha_beta3,
             'eps': eps,
+            'centralization': centralization,
         }
 
         super().__init__(params, defaults)
@@ -83,11 +88,12 @@ class AdEMAMix(BaseOptimizer):
         return min(step * alpha / t_alpha_beta3, alpha)
 
     @staticmethod
-    def schedule_beta3(t_alpha_beta3: Optional[float], step: int, beta1: float, beta3: float) -> float:
+    def schedule_beta3(t_alpha_beta3: Optional[float], step: int, beta1: float, beta3: float, eps: float) -> float:
         if t_alpha_beta3 is None:
             return beta3
 
-        log_beta1, log_beta3 = math.log(beta1), math.log(beta3)
+        # Add eps to prevent log 0
+        log_beta1, log_beta3 = math.log(beta1 + eps), math.log(beta3)
 
         return min(
             math.exp(
@@ -119,8 +125,12 @@ class AdEMAMix(BaseOptimizer):
             bias_correction1: float = self.debias(beta1, group['step'])
             bias_correction2_sq: float = math.sqrt(self.debias(beta2, group['step']))
 
+            eps = group['eps']
+            clip = group['clip']
+            centralization = group['centralization']
+
             alpha_t: float = self.schedule_alpha(group['t_alpha_beta3'], group['step'], group['alpha'])
-            beta3_t: float = self.schedule_beta3(group['t_alpha_beta3'], group['step'], beta1, beta3)
+            beta3_t: float = self.schedule_beta3(group['t_alpha_beta3'], group['step'], beta1, beta3, eps)
 
             for p in group['params']:
                 if p.grad is None:
@@ -139,12 +149,18 @@ class AdEMAMix(BaseOptimizer):
                 state = self.state[p]
 
                 if len(state) == 0:
-                    state['exp_avg'] = torch.zeros_like(p)
+                    if beta1 > 0.0: # save memory in case beta1 is 0.0
+                        state['exp_avg'] = torch.zeros_like(p)
+                    else: 
+                        state['exp_avg'] = None
                     state['exp_avg_sq'] = torch.zeros_like(p)
                     state['exp_avg_slow'] = torch.zeros_like(p)
 
-                eps = group['eps']
-                clip = group['clip']
+                # center the gradient vector
+                if centralization > 0.0 and grad.dim() > 1:
+                    grad.sub_(
+                        grad.mean(dim=tuple(range(1, grad.dim())), keepdim=True).mul_(centralization)
+                    )
 
                 # Clip the gradient 
                 if clip > 0.0:
@@ -153,13 +169,18 @@ class AdEMAMix(BaseOptimizer):
                 exp_avg, exp_avg_sq, exp_avg_slow = state['exp_avg'], state['exp_avg_sq'], state['exp_avg_slow']
 
                 if p.dtype in {torch.float16, torch.bfloat16}:
-                    exp_avg, exp_avg_sq, exp_avg_slow = exp_avg.to(torch.float32), exp_avg_sq.to(torch.float32), exp_avg_slow.to(torch.float32)
+                    if beta1 > 0.0:
+                        exp_avg = exp_avg.to(torch.float32)
+                    exp_avg_sq, exp_avg_slow = exp_avg_sq.to(torch.float32), exp_avg_slow.to(torch.float32)
 
-                exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
+                if beta1 > 0.0:
+                    exp_avg.mul_(beta1).add_(grad, alpha=1.0 - beta1)
+                else:
+                    exp_avg = grad
                 exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1.0 - beta2)
                 exp_avg_slow.mul_(beta3_t).add_(grad, alpha=1.0 - beta3_t)
 
-                de_nom = (exp_avg_sq.sqrt() / bias_correction2_sq).add_(group['eps'])
+                de_nom = (exp_avg_sq.sqrt() / bias_correction2_sq).add_(eps)
 
                 update = (exp_avg.div(bias_correction1) + alpha_t * exp_avg_slow) / de_nom
 
@@ -175,7 +196,8 @@ class AdEMAMix(BaseOptimizer):
                 p_fp32.add_(-group['lr'] * update)
                 
                 if p.dtype in {torch.float16, torch.bfloat16}:
-                    copy_stochastic_(state["exp_avg"], exp_avg)
+                    if beta1 > 0.0:
+                        copy_stochastic_(state["exp_avg"], exp_avg)
                     copy_stochastic_(state["exp_avg_sq"], exp_avg_sq)
                     copy_stochastic_(state["exp_avg_slow"], exp_avg_slow)
                     copy_stochastic_(p, p_fp32)
