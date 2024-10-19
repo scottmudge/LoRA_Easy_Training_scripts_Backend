@@ -74,10 +74,15 @@ class AdEMAMix(BaseOptimizer):
     def reset(self):
         for group in self.param_groups:
             group['step'] = 0
+            beta1, beta2, beta3 = group['betas']
+
             for p in group['params']:
                 state = self.state[p]
 
-                state['exp_avg'] = torch.zeros_like(p)
+                if beta1 > 0.0: # save memory in case beta1 is 0.0
+                    state['exp_avg'] = torch.zeros_like(p)
+                else: 
+                    state['exp_avg'] = None
                 state['exp_avg_sq'] = torch.zeros_like(p)
                 state['exp_avg_slow'] = torch.zeros_like(p)
 
