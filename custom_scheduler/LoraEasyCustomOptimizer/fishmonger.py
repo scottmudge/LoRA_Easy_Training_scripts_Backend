@@ -660,7 +660,7 @@ class FishMonger8BitBNB(Optimizer):
                 full_step = grad_nat_2 + (weight_decay * grad_weights) - (diff_amp * diff_weights)
 
                 # Centralize the gradient vector
-                if centralization != 0 and full_step.dim() > 1:
+                if centralization > 0.0 and full_step.dim() > 1:
                     full_step.sub_(
                         full_step.mean(dim=tuple(range(1, full_step.dim())), keepdim=True).mul_(centralization)
                     )

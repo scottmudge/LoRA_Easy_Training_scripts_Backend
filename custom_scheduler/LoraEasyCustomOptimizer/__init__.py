@@ -8,7 +8,7 @@ from LoraEasyCustomOptimizer.camefullsr import CAMEFullSR
 from LoraEasyCustomOptimizer.compass import Compass, Compass8Bit, Compass8BitBNB
 from LoraEasyCustomOptimizer.farmscrop import FARMSCrop
 from LoraEasyCustomOptimizer.fcompass import FCompass
-from LoraEasyCustomOptimizer.fishmonger import FishMonger, FishMonger8Bit
+from LoraEasyCustomOptimizer.fishmonger import FishMonger, FishMonger8BitBNB
 from LoraEasyCustomOptimizer.lpfadamw import LPFAdamW
 from LoraEasyCustomOptimizer.rmsprop import RMSProp
 from LoraEasyCustomOptimizer.shampoo import ScalableShampoo
@@ -24,7 +24,7 @@ OPTIMIZER_LIST: List[OPTIMIZER] = [
     FARMSCrop,
     FCompass,
     FishMonger,
-    FishMonger8Bit,
+    FishMonger8BitBNB,
     LPFAdamW,
     RMSProp,
     ScalableShampoo,
