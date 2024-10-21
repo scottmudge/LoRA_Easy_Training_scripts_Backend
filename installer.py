@@ -85,10 +85,10 @@ def setup_venv(venv_pip):
     )
     if PLATFORM == "windows":
         subprocess.check_call("venv\\Scripts\\python.exe ..\\fix_torch.py")
-    # subprocess.check_call(
-    #     f"{venv_pip} install -U xformers==0.0.28.dev881 --index-url https://download.pytorch.org/whl/cu124",
-    #     shell=PLATFORM == "linux",
-    # )
+    subprocess.check_call(
+        f"{venv_pip} install -U xformers==0.0.28.post1 --index-url https://download.pytorch.org/whl/cu124",
+        shell=PLATFORM == "linux",
+    )
     subprocess.check_call(f"{venv_pip} install -U -r requirements.txt", shell=PLATFORM == "linux")
     subprocess.check_call(f"{venv_pip} install -U ../custom_scheduler/.", shell=PLATFORM == "linux")
     subprocess.check_call(f"{venv_pip} install -U -r ../requirements.txt", shell=PLATFORM == "linux")
