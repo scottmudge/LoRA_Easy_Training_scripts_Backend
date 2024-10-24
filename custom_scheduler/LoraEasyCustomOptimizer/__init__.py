@@ -32,4 +32,5 @@ OPTIMIZER_LIST: List[OPTIMIZER] = [
     SOAP,
     Ranger21,
 ]
+
 OPTIMIZERS: Dict[str, OPTIMIZER] = {str(f"{optimizer.__name__}".lower()): optimizer for optimizer in OPTIMIZER_LIST}
