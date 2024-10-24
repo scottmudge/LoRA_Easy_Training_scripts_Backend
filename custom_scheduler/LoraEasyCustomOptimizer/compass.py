@@ -26,6 +26,10 @@ class Compass(Optimizer):
             Weight decay, i.e. a L2 penalty (default: 0.001).
         weight_decouple (bool): 
             the optimizer uses decoupled weight decay as in AdamW. (default: true)
+        lr_decouple (bool): 
+            Apply fully decoupled weight decay. (default: false)
+        max_lr (float): 
+            Max LR used for lr_decouple (default: 0.0)
         fixed_decay (bool): 
             fix weight decay (default: false).
         clip (float):
@@ -46,6 +50,8 @@ class Compass(Optimizer):
         betas=(0.975, 0.999), #Original default 0.99, 0.999
         weight_decay=0.001, #Original default 0
         weight_decouple=True,
+        lr_decouple=False,
+        max_lr=0.0,
         fixed_decay=False,
         clip=0.0,
         amp_fac=2,
@@ -57,6 +63,8 @@ class Compass(Optimizer):
             betas=betas,
             weight_decay = weight_decay,
             weight_decouple = weight_decouple,
+            lr_decouple=lr_decouple,
+            max_lr=max_lr,
             fixed_decay = fixed_decay,
             clip=clip,
             amp_fac=amp_fac,
@@ -113,6 +121,8 @@ class Compass(Optimizer):
                 centralization = group["centralization"]
                 eps = group["eps"]
                 clip = group["clip"]
+                lr_decouple = group["lr_decouple"]
+                max_lr = group["max_lr"]
                 state["step"] += 1
 
                 # center the gradient vector
@@ -145,7 +155,7 @@ class Compass(Optimizer):
 
                 if weight_decouple:
                     # Perform stepweight decay
-                    p_fp32.data.mul_(1.0 - (1.0 if fixed_decay else debiased_lr) * weight_decay)
+                    p_fp32.data.mul_(1.0 - (1.0 if fixed_decay else debiased_lr if not lr_decouple else debiased_lr / max_lr) * weight_decay)
                 elif weight_decay > 0.0 and grad is not None:
                     grad.add_(p_fp32, alpha=weight_decay)
 
