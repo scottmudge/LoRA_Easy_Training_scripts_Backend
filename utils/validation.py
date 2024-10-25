@@ -248,7 +248,7 @@ def validate_optimizer(args: dict) -> None:
             args["optimizer_type"] = "came_pytorch.CAME.CAME"
         else:
             args["optimizer_type"] = f"{OPTIMIZERS[opt_type_lower].__module__}.{OPTIMIZERS[opt_type_lower].__qualname__}"
-    else:
+    elif opt_type_lower in OPTIMIZERS:
         args["optimizer_type"] = f"{OPTIMIZERS[opt_type_lower].__module__}.{OPTIMIZERS[opt_type_lower].__qualname__}"
 
 
